@@ -5,7 +5,7 @@ export default defineConfig({
   plugins: [react()],
   server: {
     port: 5173,
-    hmr: { overlay: false },   // suppress error overlay flicker
+    hmr: { overlay: false },
     proxy: {
       '/api': {
         target: 'http://localhost:5000',
@@ -15,13 +15,15 @@ export default defineConfig({
     },
   },
   build: {
+    outDir: 'dist',
+    sourcemap: false,
     rollupOptions: {
       output: {
         manualChunks: {
-          'react-vendor':  ['react','react-dom','react-router-dom'],
+          'react-vendor':  ['react', 'react-dom', 'react-router-dom'],
           'query-vendor':  ['@tanstack/react-query'],
           'motion-vendor': ['framer-motion'],
-          'map-vendor':    ['leaflet','react-leaflet'],
+          'map-vendor':    ['leaflet', 'react-leaflet'],
           'chart-vendor':  ['recharts'],
         },
       },

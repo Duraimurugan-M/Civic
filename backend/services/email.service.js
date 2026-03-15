@@ -15,12 +15,12 @@ const transporter = nodemailer.createTransport({
 });
 
 // Verify SMTP connection on startup — logs result to console
-transporter.verify((error, success) => {
+// REPLACE WITH THIS — only logs in development:
+transporter.verify((error) => {
   if (error) {
     console.error('❌ SMTP connection failed:', error.message);
-    console.error('   Check BREVO_SMTP_HOST, BREVO_SMTP_PORT, BREVO_SMTP_USER, BREVO_SMTP_PASS in .env');
-  } else {
-    console.log('✅ SMTP server connected — emails ready to send');
+  } else if (process.env.NODE_ENV !== 'production') {
+    console.log('✅ SMTP server connected');
   }
 });
 
@@ -74,25 +74,20 @@ table.info td{padding:9px 4px;font-size:13px;border-bottom:1px solid #F8FAFC}
 
 // REPLACE WITH THIS:
 const send = async ({ to, subject, content }) => {
-  if (!to) {
-    console.warn('⚠️  Email skipped — no recipient address provided');
-    return;
-  }
-  if (!process.env.BREVO_SMTP_USER || !process.env.BREVO_SMTP_PASS) {
-    console.warn('⚠️  Email skipped — SMTP credentials not configured in .env');
-    return;
-  }
+  if (!to || !process.env.BREVO_SMTP_USER || !process.env.BREVO_SMTP_PASS) return;
   try {
-    const info = await transporter.sendMail({
-      from:    `"CivicConnect" <${process.env.EMAIL_FROM}>`,
+    await transporter.sendMail({
+      from: `"CivicConnect" <${process.env.EMAIL_FROM}>`,
       to,
       subject,
-      html:    baseTemplate(content),
+      html: baseTemplate(content),
     });
-    console.log(`📧 Email sent → ${to} | Subject: ${subject} | ID: ${info.messageId}`);
+    if (process.env.NODE_ENV !== 'production') {
+      console.log(`📧 Email sent → ${to}`);
+    }
   } catch (err) {
-    console.error(`❌ Email failed → ${to} | Subject: ${subject}`);
-    console.error('   Reason:', err.message);
+    // Always log email errors even in production so you can debug
+    console.error(`❌ Email failed → ${to}: ${err.message}`);
   }
 };
 

@@ -2,17 +2,22 @@ const mongoose = require('mongoose');
 
 const connectDB = async () => {
   try {
-    const conn = await mongoose.connect(process.env.MONGO_URI, {
-      serverSelectionTimeoutMS: 5000,
-    });
-    console.log(`✅ MongoDB Connected: ${conn.connection.host}`);
-    
-    // Create 2dsphere index for geolocation queries
-    const db = conn.connection.db;
-    await db.collection('complaints').createIndex({ location: '2dsphere' }).catch(() => {});
-    console.log('✅ Geospatial index ensured');
+    const conn = await mongoose.connect(process.env.MONGO_URI);
+
+    if (process.env.NODE_ENV !== 'production') {
+      console.log(`✅ MongoDB connected: ${conn.connection.host}`);
+    }
+
+    // Ensure geospatial index exists
+    await conn.connection.db
+      .collection('complaints')
+      .createIndex({ location: '2dsphere' })
+      .catch(() => {
+        // Index may already exist — safe to ignore
+      });
+
   } catch (error) {
-    console.error(`❌ MongoDB connection error: ${error.message}`);
+    console.error(`❌ MongoDB connection failed: ${error.message}`);
     process.exit(1);
   }
 };

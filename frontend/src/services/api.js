@@ -10,8 +10,11 @@ NProgress.configure({
   showSpinner: false,
 });
 
+// REPLACE WITH:
 const api = axios.create({
-  baseURL: '/api',
+  baseURL: import.meta.env.VITE_API_URL
+    ? `${import.meta.env.VITE_API_URL}/api`
+    : '/api',
   withCredentials: true,
   headers: { 'Content-Type': 'application/json' },
   timeout: 30000,
