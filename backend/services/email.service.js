@@ -1,28 +1,4 @@
-const nodemailer = require('nodemailer');
-
-// REPLACE WITH THIS:
-const transporter = nodemailer.createTransport({
-  host:   process.env.BREVO_SMTP_HOST,
-  port:   parseInt(process.env.BREVO_SMTP_PORT) || 587,
-  secure: false,
-  auth: {
-    user: process.env.BREVO_SMTP_USER,
-    pass: process.env.BREVO_SMTP_PASS,
-  },
-  tls: {
-    rejectUnauthorized: false,
-  },
-});
-
-// Verify SMTP connection on startup — logs result to console
-// REPLACE WITH THIS — only logs in development:
-transporter.verify((error) => {
-  if (error) {
-    console.error('❌ SMTP connection failed:', error.message);
-  } else if (process.env.NODE_ENV !== 'production') {
-    console.log('✅ SMTP server connected');
-  }
-});
+const https = require('https');
 
 const baseTemplate = (content) => `<!DOCTYPE html>
 <html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
@@ -68,33 +44,73 @@ table.info td{padding:9px 4px;font-size:13px;border-bottom:1px solid #F8FAFC}
 <div class="body">${content}</div>
 <div class="footer">
   <p>© ${new Date().getFullYear()} <strong>CivicConnect</strong> — Smart Civic Issue Management</p>
-  <p>Automated notification — do not reply &nbsp;·&nbsp; <a href="${process.env.FRONTEND_URL}">Visit Portal</a></p>
+  <p>Automated notification — do not reply &nbsp;·&nbsp;
+  <a href="${process.env.FRONTEND_URL}">Visit Portal</a></p>
 </div>
 </div></body></html>`;
 
-// REPLACE WITH THIS:
+const fmt = (d) => d
+  ? new Date(d).toLocaleDateString('en-IN', {
+      day: '2-digit', month: 'short', year: 'numeric',
+      hour: '2-digit', minute: '2-digit',
+    })
+  : '-';
+
+// ── Core send function using Brevo HTTP API ──
+// Uses Node.js built-in https — no nodemailer, no SMTP, no port issues
 const send = async ({ to, subject, content }) => {
-  if (!to || !process.env.BREVO_SMTP_USER || !process.env.BREVO_SMTP_PASS) return;
-  try {
-    await transporter.sendMail({
-      from: `"CivicConnect" <${process.env.EMAIL_FROM}>`,
-      to,
-      subject,
-      html: baseTemplate(content),
+  if (!to)                        return;
+  if (!process.env.BREVO_API_KEY) return;
+
+  const htmlContent = baseTemplate(content);
+
+  const body = JSON.stringify({
+    sender:      { name: 'CivicConnect', email: process.env.EMAIL_FROM },
+    to:          [{ email: to }],
+    subject,
+    htmlContent,
+  });
+
+  return new Promise((resolve) => {
+    const options = {
+      hostname: 'api.brevo.com',
+      path:     '/v3/smtp/email',
+      method:   'POST',
+      headers: {
+        'Content-Type':   'application/json',
+        'api-key':        process.env.BREVO_API_KEY,
+        'Content-Length': Buffer.byteLength(body),
+      },
+    };
+
+    const req = https.request(options, (res) => {
+      let data = '';
+      res.on('data', chunk => data += chunk);
+      res.on('end', () => {
+        if (res.statusCode >= 200 && res.statusCode < 300) {
+          if (process.env.NODE_ENV !== 'production') {
+            console.log(`📧 Email sent → ${to}`);
+          }
+        } else {
+          console.error(`❌ Email failed → ${to} | Status: ${res.statusCode} | ${data}`);
+        }
+        resolve();
+      });
     });
-    if (process.env.NODE_ENV !== 'production') {
-      console.log(`📧 Email sent → ${to}`);
-    }
-  } catch (err) {
-    // Always log email errors even in production so you can debug
-    console.error(`❌ Email failed → ${to}: ${err.message}`);
-  }
+
+    req.on('error', (err) => {
+      console.error(`❌ Email error → ${to}: ${err.message}`);
+      resolve();
+    });
+
+    req.write(body);
+    req.end();
+  });
 };
 
-const fmt = (d) => d ? new Date(d).toLocaleDateString('en-IN',{day:'2-digit',month:'short',year:'numeric',hour:'2-digit',minute:'2-digit'}) : '-';
-
+// ── Welcome Email ──
 exports.sendWelcomeEmail = (user) => send({
-  to: user.email,
+  to:      user.email,
   subject: '🎉 Welcome to CivicConnect',
   content: `
 <p class="greeting">Welcome, ${user.name}! 🎉</p>
@@ -102,21 +118,32 @@ exports.sendWelcomeEmail = (user) => send({
 <table class="info">
   <tr><td class="lbl">Full Name</td><td class="val">${user.name}</td></tr>
   <tr><td class="lbl">Email</td><td class="val">${user.email}</td></tr>
-  ${user.citizenId ? `<tr><td class="lbl">Citizen ID</td><td class="val"><span class="badge">${user.citizenId}</span></td></tr>` : ''}
+  ${user.citizenId
+    ? `<tr><td class="lbl">Citizen ID</td><td class="val"><span class="badge">${user.citizenId}</span></td></tr>`
+    : ''}
   <tr><td class="lbl">Account Type</td><td class="val"><span class="badge">${user.role.toUpperCase()}</span></td></tr>
 </table>
 <div class="divider"></div>
-<div class="step"><div class="dot"></div><div class="sc"><strong>Report Issues</strong> — Submit problems with photo and live location</div></div>
-<div class="step"><div class="dot" style="background:#10B981"></div><div class="sc"><strong>Track Progress</strong> — Follow each complaint from start to resolution</div></div>
-<div class="step"><div class="dot" style="background:#F59E0B"></div><div class="sc"><strong>View on Map</strong> — See all issues in your area on an interactive map</div></div>
-<div class="step"><div class="dot" style="background:#8B5CF6"></div><div class="sc"><strong>Rate Resolutions</strong> — Give feedback after your complaint is resolved</div></div>
+<div class="step"><div class="dot"></div>
+  <div class="sc"><strong>Report Issues</strong> — Submit problems with photo and live location</div>
+</div>
+<div class="step"><div class="dot" style="background:#10B981"></div>
+  <div class="sc"><strong>Track Progress</strong> — Follow each complaint from start to resolution</div>
+</div>
+<div class="step"><div class="dot" style="background:#F59E0B"></div>
+  <div class="sc"><strong>View on Map</strong> — See all issues in your area on an interactive map</div>
+</div>
+<div class="step"><div class="dot" style="background:#8B5CF6"></div>
+  <div class="sc"><strong>Rate Resolutions</strong> — Give feedback after your complaint is resolved</div>
+</div>
 <div style="text-align:center;margin-top:24px">
   <a href="${process.env.FRONTEND_URL}/dashboard" class="btn">Get Started →</a>
 </div>`,
 });
 
+// ── Complaint Submitted Email ──
 exports.sendComplaintSubmittedEmail = (user, complaint) => send({
-  to: user.email,
+  to:      user.email,
   subject: `✅ Complaint Received — ${complaint.complaintCode}`,
   content: `
 <p class="greeting">Complaint Received ✅</p>
@@ -126,7 +153,13 @@ exports.sendComplaintSubmittedEmail = (user, complaint) => send({
   <tr><td class="lbl">Reference No.</td><td class="val">${complaint.complaintCode}</td></tr>
   <tr><td class="lbl">Title</td><td class="val">${complaint.title}</td></tr>
   <tr><td class="lbl">Category</td><td class="val"><span class="badge">${complaint.category.toUpperCase()}</span></td></tr>
-  <tr><td class="lbl">Priority</td><td class="val"><span class="badge ${complaint.priority==='emergency'||complaint.priority==='high'?'bu':''}">${complaint.priority.toUpperCase()}</span></td></tr>
+  <tr><td class="lbl">Priority</td>
+    <td class="val">
+      <span class="badge ${complaint.priority === 'emergency' || complaint.priority === 'high' ? 'bu' : ''}">
+        ${complaint.priority.toUpperCase()}
+      </span>
+    </td>
+  </tr>
   <tr><td class="lbl">Status</td><td class="val"><span class="badge bp">🟡 Pending Review</span></td></tr>
   <tr><td class="lbl">Submitted</td><td class="val">${fmt(new Date())}</td></tr>
 </table>
@@ -135,8 +168,9 @@ exports.sendComplaintSubmittedEmail = (user, complaint) => send({
 </div>`,
 });
 
+// ── Status Update Email ──
 exports.sendStatusUpdateEmail = (user, complaint) => send({
-  to: user.email,
+  to:      user.email,
   subject: `🔔 Update on ${complaint.complaintCode}`,
   content: `
 <p class="greeting">Complaint Status Updated 🔔</p>
@@ -144,17 +178,27 @@ exports.sendStatusUpdateEmail = (user, complaint) => send({
 <table class="info">
   <tr><td class="lbl">Reference</td><td class="val">${complaint.complaintCode}</td></tr>
   <tr><td class="lbl">Title</td><td class="val">${complaint.title}</td></tr>
-  <tr><td class="lbl">New Status</td><td class="val"><span class="badge ${complaint.status==='resolved'?'br':complaint.status==='rejected'?'bu':'bp'}">${complaint.status.replace('_',' ').toUpperCase()}</span></td></tr>
+  <tr><td class="lbl">New Status</td>
+    <td class="val">
+      <span class="badge ${
+        complaint.status === 'resolved' ? 'br' :
+        complaint.status === 'rejected' ? 'bu' : 'bp'
+      }">
+        ${complaint.status.replace('_', ' ').toUpperCase()}
+      </span>
+    </td>
+  </tr>
   <tr><td class="lbl">Updated On</td><td class="val">${fmt(new Date())}</td></tr>
 </table>
-<div class="alert aw">💡 Log in to view the full timeline and any notes added by the team.</div>
+<div class="alert aw">💡 Log in to view the full timeline and notes added by the team.</div>
 <div style="text-align:center;margin-top:16px">
   <a href="${process.env.FRONTEND_URL}/complaints/${complaint._id}" class="btn">View Details →</a>
 </div>`,
 });
 
+// ── Resolution Email ──
 exports.sendResolutionEmail = (user, complaint) => send({
-  to: user.email,
+  to:      user.email,
   subject: `🎉 Resolved — ${complaint.complaintCode}`,
   content: `
 <p class="greeting">Issue Resolved! 🎉</p>
@@ -167,8 +211,12 @@ exports.sendResolutionEmail = (user, complaint) => send({
   <tr><td class="lbl">Resolved On</td><td class="val">${fmt(new Date())}</td></tr>
 </table>
 <div class="divider"></div>
-<p style="font-size:13px;color:#64748B;text-align:center;margin-bottom:16px">⭐ Please rate the resolution to help us improve our service.</p>
+<p style="font-size:13px;color:#64748B;text-align:center;margin-bottom:16px">
+  ⭐ Please rate the resolution to help us improve our service.
+</p>
 <div style="text-align:center">
-  <a href="${process.env.FRONTEND_URL}/complaints/${complaint._id}" class="btn btn-g">Rate the Resolution ⭐</a>
+  <a href="${process.env.FRONTEND_URL}/complaints/${complaint._id}" class="btn btn-g">
+    Rate the Resolution ⭐
+  </a>
 </div>`,
 });
